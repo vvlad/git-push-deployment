@@ -18,7 +18,12 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+    app init --app=blog --database-name=blog --database-user=blog_user --database-password=blog_password --hostname=blog.host
+    app redeploy --app=blog
+
+
+    git remote add production deploy@blog.host
+    git push production master
 
 ## Contributing
 
