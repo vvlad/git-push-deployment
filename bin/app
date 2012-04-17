@@ -1,0 +1,284 @@
+#!/usr/bin/env ruby
+require 'pathname'
+require 'thor'
+require 'thor/group'
+require 'fileutils'
+
+class Command < Thor
+
+  module Configuration
+
+    def repository
+      @repository = Pathname(ENV["HOME"]).join("#{app}.git")	
+    end
+    def environment
+      @environment = shared_path.join("config/environment").read.strip
+    end
+    def current_user
+      @current_user ||= `whoami`.strip
+    end
+    def branch
+      @branch ||=options[:branch]
+    end
+    def app
+      options[:app]
+    end
+    def app_root
+      @app_root = Pathname(options[:deploy_to] || "/srv/apps/#{app}")
+    end
+    def timestamp
+      @timestamp ||=Time.now.strftime("%Y%m%d%H%M%S")
+    end
+
+    def shared_path
+      @shared_path ||= app_root.join("shared")
+    end
+
+    def release_path
+      @release_path ||= app_root.join("releases", timestamp )
+    end
+
+    def repository_path
+      @repository_path ||= shared_path.join("cache")
+    end
+
+    def hooks_path
+      @hooks_path ||= release_path.join("hooks")
+    end
+
+    def current_path
+      @current_path ||= app_root.join("current")
+    end
+
+    def copy
+      run "GIT_DIR=#{repository} git archive --format=tar #{branch} |(cd '#{release_path}' && tar xf -)"
+    end
+
+    def run(cmd)
+      system(cmd)
+      fail "fail to run `#{cmd}'" unless $?.exitstatus == 0
+    end
+
+    def bundle
+      gemfile = release_path.join("Gemfile")
+      if gemfile.exist?
+        unless gemfile.read["unicorn"]
+          gemfile.open("a") { |file| file.puts "gem 'unicorn'" }
+        end
+        run("bundle install --gemfile='#{gemfile}' --path '#{shared_path.join("gems")}' --deployment --binstubs='#{shared_path.join("bin")}' --without=test development")
+      end
+    end
+
+    def run_with_bundle(cmd)
+      run "cd '#{release_path}' && bundle exec #{cmd}"
+    end
+
+    def generate_procfile
+      procfile = release_path.join("Procfile")
+      unless procfile.exist?
+        File.open(procfile,"w") do |file|
+          file.puts "web: bundle exec unicorn -c config/unicorn.rb -E #{environment}"
+        end
+      end
+      run("sudo foreman export upstart /etc/init --template=#{File.expand_path("../../templates",__FILE__)} --app=#{app} --user=#{current_user} --app-root=#{current_path} --log=#{shared_path.join("log/")} --procfile=#{current_path.join("Procfile")}")
+    end
+
+    def configure
+      Dir[shared_path.join("config/**/*")].each do |file|
+        FileUtils.rm_rf release_path.join(Pathname(file).basename)
+        FileUtils.ln_sf file, release_path.join("config")
+        puts "Injecting: #{file} -> #{release_path.join("config")}"
+      end
+    end
+
+    def symlink
+      %w[tmp log].each do |dir|
+        FileUtils.rm_rf release_path.join(dir)
+        FileUtils.ln_sf shared_path.join(dir), release_path.join(dir)
+      end
+      FileUtils.rm_f current_path
+      FileUtils.ln_sf release_path, current_path
+    end
+
+    def migratable?
+      !Dir[release_path.join("db/migrate/**/*.rb")].empty?
+    end
+    def migrate
+      if migratable?
+        run_with_bundle("rake db:migrate --trace")
+      end
+    end
+
+    def restart
+      run("sudo sudo sh -c \"restart #{app} || start #{app}\"")
+    end
+
+
+    def assets_compilation
+      run("cd #{release_path} && bundle exec rake assets:clean assets:precompile RAILS_ENV=#{environment}")
+    end
+
+    def cleanup
+      FileUtils.rm_rf Dir[app_root.join("releases","*")].sort[0..-4]
+    end
+  end
+
+  no_tasks do
+    include Configuration
+
+    def invoke_hook(stage, action)
+      hook_file = hooks_path.join("#{stage}_#{action}")
+      eval(File.read(hook_file)) if hook_file.exist?	
+    end
+
+    def hook_around(action, *args)
+      invoke_hook :before, action
+      send(action,*args)
+      invoke_hook :after, action
+    end
+    def initialize_shared
+      ["tmp/sockets", "tmp/pids", "config", "bin", "log"].each do |dir|
+        dir_path = shared_path.join(dir)
+        FileUtils.mkdir_p dir_path unless dir_path.exist?
+      end
+    end
+  end
+
+
+  desc "deploy", "deploys an application"
+  method_option :branch, type: :string, required: true, desc: "rev string or branch name"
+  method_option :app, type: :string, required: true, desc: "application identifier"
+  def deploy
+    ENV["RAILS_ENV"] = ENV["RACK_ENV"] = environment
+    ENV.delete "GIT_DIR"
+    initialize_shared
+    FileUtils.mkdir_p release_path
+    hook_around :copy
+    hook_around :bundle
+    hook_around :configure
+    hook_around :migrate
+    hook_around :assets_compilation
+    hook_around :symlink
+    hook_around :generate_procfile
+    hook_around :restart
+    hook_around :cleanup
+  end
+
+  desc "redeploy", "redeploys an application"
+  method_option :app, type: :string, required: true, desc: "application identifier"
+
+  def redeploy
+    @branch = `cd #{repository} && git symbolic-ref HEAD`.strip
+    deploy
+  end
+
+  desc "init", "initialize application"
+  method_option :app, type: :string, required: true, desc: "application identifier"
+  method_option :database_name, type: :string, required: true, desc: "database name"
+  method_option :database_host, type: :string, required: true, desc: "database name", default: "database.cf"
+  method_option :database_user, type: :string, required: true, desc: "database user"
+  method_option :environment, type: :string, default: "production", desc: "app environment"
+  method_option :hostname, type: :string, desc: "app hostname"
+  method_option :database_password, type: :string, required: false, desc: "database password"
+  def init
+    initialize_shared
+    repository_path = Pathname(ENV["HOME"]).join("#{app}.git")
+    run("git init --bare #{repository_path}")		
+    database_config = shared_path.join("config/database.yml")
+    database_config.open("w") do |db_conf|
+      db_conf << <<-eos
+      production:
+      adapter: mysql2
+      database: #{options[:database_name]}
+      username: #{options[:database_user]}
+      password: #{options[:database_password]}
+      host: #{options[:database_host]}
+      pool: 5
+      eos
+    end
+    shared_path.join("config/nginx.conf").open("w") do |nginx|
+      nginx << <<-EOS
+upstream #{app} {
+  server unix:#{shared_path}/tmp/sockets/unicorn.socket fail_timeout=0;
+}
+
+server {
+  server_name #{app}.app.cf;
+  #{"server_name #{options[:hostname]};" if options[:hostname] }
+  keepalive_timeout 5;
+  root #{current_path}/public;
+
+  try_files $uri/index.html $uri.html $uri @app;
+  location @app {
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+    proxy_pass http://#{app};
+  }
+  error_page 500 502 503 504 /500.html;
+  location = /500.html {
+    root #{shared_path}/public;
+  }
+}
+    EOS
+    end
+    repository_path.join("hooks/pre-receive").open("w") do |hook|
+      hook << <<-EOS
+#!/bin/bash
+
+export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+export TERM=xterm-color
+
+head="$(git --bare symbolic-ref HEAD)"
+[ "$?" != "0" ] && exit 1
+umask 002
+while read oldrev newrev refname
+do
+  [ "$refname" = "$head" ] && break
+done
+
+[ -z "${newrev//0}" ] && exit;
+
+sudo mkdir -p /srv/apps
+exec ~/bin/app deploy --repository=#{repository_path} --branch=$newrev --app=#{app} --environment=#{options[:environment]}
+  EOS
+    end
+    FileUtils.chmod(0755, repository_path.join("hooks/pre-receive"))
+    shared_path.join("config/environment").open("w") { |f| f << options[:environment] }
+    shared_path.join("config/unicorn.rb").open("w") do |file|
+      file << <<-EOT
+require 'pathname'
+root = Pathname(__FILE__).dirname.dirname.expand_path
+worker_processes 4
+working_directory root
+preload_app true
+
+#listen ENV["PORT"], :tcp_nopush => true
+listen "\#{root}/tmp/sockets/unicorn.socket"
+timeout 600
+
+
+pid "\#{root}/tmp/unicorn.pid"
+
+before_fork do |server, worker|
+  old_pid = "\#{root}/tmp/unicorn.pid"
+  if File.exist?(old_pid) && server.pid != old_pid
+    begin
+      Process.kill("QUIT", File.read(old_pid).to_i)
+    rescue Errno::ENOENT, Errno::ESRCH
+      # someone else did our job for us
+    end
+  end
+end
+
+after_fork do |server, worker|
+  ActiveRecord::Base.establish_connection
+end
+      EOT
+    end
+  end
+end
+
+Command.start
+
+
