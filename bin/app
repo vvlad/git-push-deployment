@@ -240,7 +240,7 @@ done
 [ -z "${newrev//0}" ] && exit;
 
 sudo mkdir -p /srv/apps
-exec ~/bin/app deploy --repository=#{repository_path} --branch=$newrev --app=#{app} --environment=#{options[:environment]}
+exec #{File.expand_path(__FILE__)} deploy --repository=#{repository_path} --branch=$newrev --app=#{app} --environment=#{options[:environment]}
   EOS
     end
     FileUtils.chmod(0755, repository_path.join("hooks/pre-receive"))

@@ -4,8 +4,8 @@ require File.expand_path('../lib/git-push-deployment/version', __FILE__)
 Gem::Specification.new do |gem|
   gem.authors       = ["Verestiuc Vlad"]
   gem.email         = ["vlad.verestiuc@me.com"]
-  gem.description   = %q{TODO: Write a gem description}
-  gem.summary       = %q{TODO: Write a gem summary}
+  gem.description   = %q{Git push deployment for rails apps}
+  gem.summary       = %q{Git push deployment for rails apps}
   gem.homepage      = ""
 
   gem.files         = `git ls-files`.split($\)
