@@ -186,15 +186,15 @@ class Command < Thor
     run("git init --bare #{repository_path}")		
     database_config = shared_path.join("config/database.yml")
     database_config.open("w") do |db_conf|
-      db_conf << <<-eos
-      production:
-      adapter: mysql2
-      database: #{options[:database_name]}
-      username: #{options[:database_user]}
-      password: #{options[:database_password]}
-      host: #{options[:database_host]}
-      pool: 5
-      eos
+      db_conf << <<-EOT
+production:
+  adapter: mysql2
+  database: #{options[:database_name]}
+  username: #{options[:database_user]}
+  password: #{options[:database_password]}
+  host: #{options[:database_host]}
+  pool: 5
+      EOT
     end
     shared_path.join("config/nginx.conf").open("w") do |nginx|
       nginx << <<-EOS
