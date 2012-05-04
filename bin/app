@@ -175,7 +175,7 @@ class Command < Thor
   desc "init", "initialize application"
   method_option :app, type: :string, required: true, desc: "application identifier"
   method_option :database_name, type: :string, required: true, desc: "database name"
-  method_option :database_host, type: :string, required: true, desc: "database name", default: "database.cf"
+  method_option :database_host, type: :string, required: true, desc: "database name"
   method_option :database_user, type: :string, required: true, desc: "database user"
   method_option :environment, type: :string, default: "production", desc: "app environment"
   method_option :hostname, type: :string, desc: "app hostname"
@@ -203,7 +203,6 @@ upstream #{app} {
 }
 
 server {
-  server_name #{app}.app.cf;
   #{"server_name #{options[:hostname]};" if options[:hostname] }
   keepalive_timeout 5;
   root #{current_path}/public;
