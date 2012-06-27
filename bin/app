@@ -89,6 +89,13 @@ class Command < Thor
         FileUtils.ln_sf file, release_path.join("config")
         puts "Injecting: #{file} -> #{release_path.join("config")}"
       end
+			file = shared_path.join("environment.sh")
+			if file.exist?
+        puts "Injecting: #{file} -> #{release_path.join(".env")}"
+				FileUtils.ln_sf file, release_path.join(".env")
+			else
+        puts "Injecting: #{file} : Not Found"
+			end
     end
 
     def symlink
@@ -175,7 +182,7 @@ class Command < Thor
   desc "init", "initialize application"
   method_option :app, type: :string, required: true, desc: "application identifier"
   method_option :database_name, type: :string, required: true, desc: "database name"
-  method_option :database_host, type: :string, required: true, desc: "database name", default: "database.cf"
+  method_option :database_host, type: :string, required: true, desc: "database name"
   method_option :database_user, type: :string, required: true, desc: "database user"
   method_option :environment, type: :string, default: "production", desc: "app environment"
   method_option :hostname, type: :string, desc: "app hostname"
