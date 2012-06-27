@@ -210,7 +210,6 @@ upstream #{app} {
 }
 
 server {
-  server_name #{app}.app.cf;
   #{"server_name #{options[:hostname]};" if options[:hostname] }
   keepalive_timeout 5;
   root #{current_path}/public;
