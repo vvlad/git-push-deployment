@@ -135,8 +135,14 @@ class Command < Thor
 
     def invoke_hook(stage, action)
       hook_file = hooks_path.join("#{stage}_#{action}")
-      eval(File.read(hook_file)) if hook_file.exist?	
-    end
+			print "[hook] #{hook_file.to_s.gsub("#{release_path}/",'')} "
+			if hook_file.exist?	
+				puts "found"
+				eval(File.read(hook_file))
+			else
+				puts "not found skipping"
+			end
+		end
 
     def hook_around(action, *args)
       invoke_hook :before, action
