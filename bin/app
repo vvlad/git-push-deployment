@@ -3,6 +3,7 @@ require 'pathname'
 require 'thor'
 require 'thor/group'
 require 'fileutils'
+require 'shellwords'
 
 class Command < Thor
 
@@ -58,6 +59,12 @@ class Command < Thor
       system(cmd)
       fail "fail to run `#{cmd}'" unless $?.exitstatus == 0
     end
+
+   def sudo(cmd)
+     cmd = "sudo sh -c '#{cmd.gsub(/'/,"\\'")}'"
+     system(cmd)
+      fail "fail to run `#{cmd}'" unless $?.exitstatus == 0
+   end
 
     def bundle
       gemfile = release_path.join("Gemfile")
@@ -117,7 +124,7 @@ class Command < Thor
     end
 
     def restart
-      run("sudo sudo sh -c \"restart #{app} || start #{app}\"")
+     sudo "restart #{app} || start #{app}"
     end
 
 
@@ -157,6 +164,58 @@ class Command < Thor
     end
   end
 
+
+  desc "bootstrap", "bootstraps the server"
+ def bootstrap
+   sudo "apt-get -qqy install build-essential libmysqlclient-dev imagemagick libmagick++-dev nginx-full git-core"
+   sudo "id deploy >/dev/null 2>&1 || adduser --system --home /home/deploy deploy"
+   sudo "(test ! -d /srv/apps && ( mkdir -p /srv/apps && chown -R deploy:nogroup /srv/apps )) || true"
+   sudo "(test ! -f /etc/sudoers.d/deploy && ( echo \"deploy ALL=(ALL) NOPASSWD: ALL\" >/etc/sudoers.d/deploy && chmod 0440 /etc/sudoers.d/deploy)) || true "
+   Pathname("/etc/nginx/nginx.conf").open("w") do |f|
+     f << <<-eoc
+user deploy nogroup;
+worker_processes 4;
+pid /var/run/nginx.pid;
+
+events {
+  worker_connections 768;
+  multi_accept on;
+}
+
+http {
+charset utf-8;
+  sendfile on;
+  tcp_nopush on;
+  tcp_nodelay on;
+  keepalive_timeout 65;
+  types_hash_max_size 2048;
+
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+
+  access_log /var/log/nginx/access.log;
+  error_log /var/log/nginx/error.log;
+
+  gzip on;
+  gzip_disable "msie6";
+
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 6;
+  gzip_buffers 16 8k;
+  gzip_http_version 1.1;
+  gzip_types text/plain text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript;
+
+  client_max_body_size 100m;
+  server {
+    root /var/www;
+  }
+  include /srv/apps/*/shared/config/nginx.conf;
+}
+
+     eoc
+   end
+ end
 
   desc "deploy", "deploys an application"
   method_option :branch, type: :string, required: true, desc: "rev string or branch name"
@@ -252,7 +311,7 @@ done
 [ -z "${newrev//0}" ] && exit;
 
 sudo mkdir -p /srv/apps
-exec #{File.expand_path(__FILE__)} deploy --repository=#{repository_path} --branch=$newrev --app=#{app} --environment=#{options[:environment]}
+exec #{File.expand_path(__FILE__)} deploy --branch=$newrev --app=#{app}
   EOS
     end
     FileUtils.chmod(0755, repository_path.join("hooks/pre-receive"))
